@@ -1,0 +1,91 @@
+
+
+
+vec2 createdBeforeDefinition;
+
+vec2 usedBeforeDefinition()
+{
+	
+}
+
+class vec2
+{
+	float x;
+	float y;
+}
+
+class vec3
+{
+	float x;
+	float y;
+	float z;
+}class vec4{
+	float x;float y;
+	float z;	float w;
+}
+
+
+class ray
+{
+	vec3 ro;
+	vec3 rd;
+}
+
+ray Mray1;
+ray Mray2;
+ray Mray3;
+ray Mray4;
+
+ray generateRay()
+{
+	
+}
+
+
+ray multiGenerateRay(vec2 arg1, vec2 arg2)
+{
+	arg1.x = 1;
+	arg1.y = arg2.y;
+}
+
+vec3 calculateRay(float x, float y)
+{
+	vec3 forward;
+	float mapX = x - 5;
+	float mapY = y - 5;
+	forward.x = mapX * x;
+	forward.y = mapY * y;
+	return forward;
+}
+
+vec3 calculateDirection(float x, float y)
+{
+	vec3 ret;
+	return ret;
+}
+
+ray TestExpressions()
+{
+	float a;
+	a = 10;
+	
+	float b = a * 10;
+	float c = b + 5;
+	float d = 2 * b;
+	float e = (1 + a) * (3 + (b * c));
+
+	calculateRay(calculateRay(1,2 + (3 * 4)), 5);
+	
+	vec3 vecA;
+	vec3 vecB = vecA;
+
+	vec3 origin = calculateRay(a,b,3 + 5 * e);
+	vec3 direction = calculateDirection(a,b);
+
+}
+
+ray main()
+{
+	Mray4 = TestExpressions();
+}
+

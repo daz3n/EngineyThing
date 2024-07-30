@@ -1,0 +1,36 @@
+
+ERROR1
+
+class vec2 ERROR2
+{
+	float x ERROR3;
+	float y; ERROR4;
+}
+
+class vec3
+{
+	float x;
+	float y;
+	float z;
+}class vec4{
+	float x;float y;
+	float z;	float w;
+}
+
+
+class ray
+{
+	vec3 ro;
+	vec3 rd;
+}
+
+ray Mray1;
+ray Mray2;
+ray Mray3;
+ray Mray4;
+
+ray generateRay(ERROR)
+{
+
+}
+
