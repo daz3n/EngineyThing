@@ -12,7 +12,6 @@ uniform sampler2D specular;
 
 
 // uniforms
-uniform vec3 albedo;
 
 // uniform float metallic;
 // uniform float roughness;
@@ -43,7 +42,12 @@ void main()
 
     // test
    gAlbedoSpec = texture(diffuse, TexCoords).rgb;
-   if (gAlbedoSpec == vec3(0)) gAlbedoSpec = albedo;
+   // gAlbedoSpec += texture(specular, TexCoords).rgb;
+
+   // gAlbedoSpec = vec3(TexCoords.x,0,TexCoords.y);
+   
+   // gAlbedoSpec = vec3(1,0,1);
+
 
 
     // and the diffuse per-fragment color

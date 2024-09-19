@@ -8,17 +8,23 @@
 #include <filesystem>
 #include <unordered_map>
 #include <iostream>
+#include <unordered_map>
 
-
-#include "Map.h"
 
 #include "../utils/math/vector.hpp"
 #include "../utils/math/matrix.hpp"
 #include "../utils/event/action.h"
 
+#include "./components.h"
+
 // vcpkg
 #include <glad/glad.h>
 #include <glfw/glfw3.h>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
+
 
 #include <assimp/Importer.hpp>
 #include <assimp/scene.h>
@@ -29,256 +35,755 @@
 #include "stb_image.h"
 // 3rd party headers
 
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+class transform;
+class texture;
+class shader;
+class scene_graph;
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+using std::string;
+std::string read_file(const std::string& filename);
+
+/////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+
+enum class shader_parameter_type
+{
+	integer,
+	floating,
+	vec2, vec3, vec4,
+	mat2, mat3, mat4,
+
+	cubemap,
+	texture1D, texture2D, texture3D,
+};
+
+struct shader_uniform
+{
+	std::string name;
+	shader_parameter_type type;
+	unsigned int index = 0;
+};
+
+struct shader_binding
+{
+	std::string name; // camera
+	unsigned int slot = 0; // 0
+};
+
+struct material
+{
+	std::string _name;
+
+	shader* shader = nullptr;
+
+	texture* diffuse = nullptr;
+	texture* specular = nullptr;
+
+
+
+	bool set_uniforms();
+};
+
+class shader
+{
+	std::string _name;
+	int _targets;
+
+	unsigned int _handle;
+	std::vector<shader_uniform> uniforms;
+	std::vector<shader_binding> bindings;
+
+	std::string _path_vert;
+	std::string _path_frag;
+	std::string _path_geom;
+
+	unsigned int build_module(unsigned int Type = GL_VERTEX_SHADER, const std::string& insource = "")
+	{
+		const char* source = insource.c_str();
+
+		unsigned int id = glCreateShader(Type);
+		glShaderSource(id, 1, &source, NULL);
+		glCompileShader(id);
+
+		// check for compilation errors
+		int success;
+		char infoLog[512];
+		glGetShaderiv(id, GL_COMPILE_STATUS, &success);
+		if (!success)
+		{
+			glGetShaderInfoLog(id, 512, NULL, infoLog);
+			printf("failed to compile shader: '%s'\n---\n", infoLog);
+			return 0;
+		}
+
+		return id;
+	}
+	unsigned int build_shader(unsigned int& Vert, unsigned int& Frag, unsigned int& Geom)
+	{
+		// link shaders
+		unsigned int shaderProgram = glCreateProgram();
+		if (Vert) glAttachShader(shaderProgram, Vert);
+		if (Frag) glAttachShader(shaderProgram, Frag);
+		if (Geom) glAttachShader(shaderProgram, Geom);
+		glLinkProgram(shaderProgram);
+
+		// check for linking errors
+		int success;
+		char infoLog[512];
+		glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
+		if (!success) {
+			glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
+			printf("failed to link shader: '%s'\n---\n");
+		}
+
+		if (Vert) glDeleteShader(Vert);
+		if (Frag) glDeleteShader(Frag);
+		if (Geom) glDeleteShader(Geom);
+
+		return shaderProgram;
+	}
+
+
+	void read_shader_interface()
+	{
+		int count;
+
+		int size; // size of the variable
+		unsigned int type; // type of the variable (float, vec3 or mat4, etc)
+
+		enum { bufSize = 512 };
+
+		// attributes
+		{
+			glGetProgramiv(_handle, GL_ACTIVE_ATTRIBUTES, &count);
+			printf("\tActive Attributes: %d\n", count);
+
+			for (int i = 0; i < count; i++)
+			{
+				char name[bufSize]{};
+				glGetActiveAttrib(_handle, (unsigned int)i, bufSize, NULL, &size, &type, name);
+
+				printf("\t\t#%d Type: %u Name: %s\n", i, type, name);
+			}
+		}
+
+		// uniforms
+		{
+			glGetProgramiv(_handle, GL_ACTIVE_UNIFORMS, &count);
+			printf("\tActive Uniforms: %d\n", count);
+
+			for (int i = 0; i < count; i++)
+			{
+				char name[bufSize]{};
+
+				glGetActiveUniform(_handle, (unsigned int)i, bufSize, NULL, &size, &type, name);
+
+				printf("\t\tUniform #%d Type: %u Name: %s\n", i, type, name);
+
+				shader_uniform add;
+				add.name = name;
+				add.index = i;
+
+				// primitives
+				if (type == GL_INT) add.type = shader_parameter_type::integer;
+				else if (type == GL_FLOAT) add.type = shader_parameter_type::floating;
+				// vectors
+				else if (type == GL_FLOAT_VEC2) add.type = shader_parameter_type::vec2;
+				else if (type == GL_FLOAT_VEC3) add.type = shader_parameter_type::vec3;
+				else if (type == GL_FLOAT_VEC4) add.type = shader_parameter_type::vec4;
+				// matrices
+				else if (type == GL_FLOAT_MAT2) add.type = shader_parameter_type::mat2;
+				else if (type == GL_FLOAT_MAT3) add.type = shader_parameter_type::mat3;
+				else if (type == GL_FLOAT_MAT4) add.type = shader_parameter_type::mat4;
+				// samplers
+				else if (type == GL_SAMPLER_1D) add.type = shader_parameter_type::texture1D;
+				else if (type == GL_SAMPLER_2D) add.type = shader_parameter_type::texture2D;
+				else if (type == GL_SAMPLER_3D) add.type = shader_parameter_type::texture3D;
+				// other
+				else __debugbreak();
+
+				uniforms.push_back(add);
+			}
+		}
+
+		// uniform blocks
+		{
+			glGetProgramiv(_handle, GL_ACTIVE_UNIFORM_BLOCKS, &count);
+			printf("\tActive Uniform Blocks: %d\n", count);
+
+			for (int i = 0; i < count; i++)
+			{
+				char name[bufSize]{};
+
+				glGetActiveUniformBlockName(_handle, (unsigned int)i, bufSize, NULL, name);
+
+				printf("\t\tUniform block %d: '%s'\n", i, name);
+
+				shader_binding add;
+				add.name = name;
+				add.slot = i;
+				bindings.push_back(add);
+			}
+		}
+	}
+
+public:
+	string name() { return _name; }
+	int targets() { return _targets; }
+	unsigned int handle() { return _handle; }
+
+	shader(const std::string& name) : _name(name)
+	{
+		_path_vert = "Resources//Shaders//" + name + ".vert";
+		_path_frag = "Resources//Shaders//" + name + ".frag";
+		_path_geom = "Resources//Shaders//" + name + ".geom";
+	}
+
+	void bind()
+	{
+		glUseProgram(_handle);
+	}
+	bool build()
+	{
+		// find the vert and frag shaders in the shaders directory by name
+		std::string path_v = path_vert();
+		std::string path_f = path_frag();
+		std::string path_g = path_geom();
+
+		// get their data
+		std::string src_v = read_file(path_v);
+		std::string src_f = read_file(path_f);
+		std::string src_g = read_file(path_g);
+
+		// build the shader
+		unsigned int id_v = src_v.size() <= 5 ? 0 : build_module(GL_VERTEX_SHADER, src_v);
+		unsigned int id_f = src_f.size() <= 5 ? 0 : build_module(GL_FRAGMENT_SHADER, src_f);
+		unsigned int id_g = src_g.size() <= 5 ? 0 : build_module(GL_GEOMETRY_SHADER, src_g);
+
+		_handle = build_shader(
+			id_v,
+			id_f,
+			id_g);
+
+		read_shader_interface();
+
+		return _handle != 0;
+	}
+	string path_vert() { return _path_vert; }
+	string path_frag() { return _path_frag; }
+	string path_geom() { return _path_geom; }
+
+	material create_material()
+	{
+		material ret;
+		ret.shader = this;
+
+		// for (auto& x : uniforms)
+		// {
+		// 	shader_parameter param;
+		// 	param.name = x.name;
+		// 	param.type = x.type;
+		// 	ret.parameters.push_back(param);
+		// }
+
+		return ret;
+	}
+
+
+	// utility uniform functions
+	// ------------------------------------------------------------------------
+	void setBool(const std::string& name, bool value) const
+	{
+		glUniform1i(glGetUniformLocation(_handle, name.c_str()), (int)value);
+	}
+	// ------------------------------------------------------------------------
+	void setInt(const std::string& name, int value) const
+	{
+		glUniform1i(glGetUniformLocation(_handle, name.c_str()), value);
+	}
+	// ------------------------------------------------------------------------
+	void setFloat(const std::string& name, float value) const
+	{
+		glUniform1f(glGetUniformLocation(_handle, name.c_str()), value);
+	}
+	// ------------------------------------------------------------------------
+	void setVec2(const std::string& name, const vec2& value) const
+	{
+		glUniform2fv(glGetUniformLocation(_handle, name.c_str()), 1, &value[0]);
+	}
+	void setVec2(const std::string& name, float x, float y) const
+	{
+		glUniform2f(glGetUniformLocation(_handle, name.c_str()), x, y);
+	}
+	// ------------------------------------------------------------------------
+	void setVec3(const std::string& name, const vec3& value) const
+	{
+		glUniform3fv(glGetUniformLocation(_handle, name.c_str()), 1, &value[0]);
+	}
+	void setVec3(const std::string& name, float x, float y, float z) const
+	{
+		glUniform3f(glGetUniformLocation(_handle, name.c_str()), x, y, z);
+	}
+	// ------------------------------------------------------------------------
+	void setVec4(const std::string& name, const vec4& value) const
+	{
+		glUniform4fv(glGetUniformLocation(_handle, name.c_str()), 1, &value[0]);
+	}
+	void setVec4(const std::string& name, float x, float y, float z, float w) const
+	{
+		glUniform4f(glGetUniformLocation(_handle, name.c_str()), x, y, z, w);
+	}
+	// ------------------------------------------------------------------------
+	void setMat2(const std::string& name, const mat2& mat) const
+	{
+		glUniformMatrix2fv(glGetUniformLocation(_handle, name.c_str()), 1, GL_FALSE, &mat[0][0]);
+	}
+	// ------------------------------------------------------------------------
+	void setMat3(const std::string& name, const mat3& mat) const
+	{
+		glUniformMatrix3fv(glGetUniformLocation(_handle, name.c_str()), 1, GL_FALSE, &mat[0][0]);
+	}
+	// ------------------------------------------------------------------------
+	void setMat4(const std::string& name, const mat4& mat) const
+	{
+		glUniformMatrix4fv(glGetUniformLocation(_handle, name.c_str()), 1, GL_FALSE, &mat[0][0]);
+	}
+};
+
 struct vertex
 {
 	vec3 position;
 	vec3 normal;
+	vec4 color;
 	vec2 uv;
 };
+
+struct buffer
+{
+	unsigned int handle = 0; // GPU
+	unsigned int type = 0;   // GL_ELEMENT_ARRAY_BUFFER
+	unsigned int size = 0;   // 10000
+	unsigned int pos = 0;    // 0
+};
+
+class component
+{
+	std::string _name;
+public:
+	component(std::string name) : _name(name) {}
+
+	const std::string& name() { return _name; }
+};
+class transform
+{
+	std::string _name;
+
+	transform* _parent = nullptr;
+	std::vector<transform*> _children;
+
+	vec3 _position{ 0,0,0 };
+	vec3 _scale{ 1,1,1 };
+
+	vec4 _quat_rotation = { 0,0,0,1 };
+
+	mat4 _local_transform = mat4(1);
+	mat4 _global_transform = mat4(1);
+
+	bool _dirty = false;
+
+	std::unordered_map<std::string, component*> _components;
+	// recalculates local transform
+	// recalculates global transform
+	// sets dirty to false
+	void recalculate()
+	{
+		auto m1 = transform_matrix::translate(mat4(1), _position);
+		
+		auto m3 = transform_matrix::scale(m1, _scale);
+
+		auto glm1 = glm::translate(glm::mat4(1), glm::vec3(_position.x, _position.y, _position.z));
+		auto glm3 = glm::scale(glm1, glm::vec3(_scale.x, _scale.y, _scale.z));
+
+		for (int i = 0; i < 4; ++i)
+		{
+			for (int j = 0; j < 4; ++j)
+			{
+				if (m3[i][j] != glm3[i][j])
+				{
+					__debugbreak();
+				}
+			}
+		}
+
+		_local_transform = m3;
+
+		if (_parent)
+			_global_transform = _parent->_global_transform * m3;
+		else
+			_global_transform = _local_transform;
+
+
+		for (auto* child : _children)
+		{
+			child->recalculate();
+		}
+		_dirty = false;
+	}
+public:
+	class mesh* DRAW = nullptr;
+
+	component* get_component(const std::string& name)
+	{
+		return _components[name];
+	}
+
+	const mat4& local_transform()
+	{
+		if (_dirty) recalculate();
+		return _local_transform;
+	}
+	const mat4& global_transform()
+	{
+		if (_dirty) recalculate();
+		return _global_transform;
+	}
+
+	transform* parent()
+	{
+		return _parent;
+	}
+	vec3 position()
+	{
+		return _position;
+	}
+	vec4 rotation()
+	{
+		return _quat_rotation;
+	}
+	vec3 scale()
+	{
+		return _scale;
+	}
+	void set_position(vec3 val)
+	{
+		_position = val;
+		_dirty = true;
+	}
+	void set_rotation(vec4 val)
+	{
+		_quat_rotation = val;
+		_dirty = true;
+	}
+	void set_scale(vec3 val)
+	{
+		_scale = val;
+		_dirty = true;
+	}
+	void rename(const std::string& name)
+	{
+		_name = name;
+	}
+
+	void set_parent(transform* t)
+	{
+		if (_parent)
+		{
+			_parent->remove_child(this);
+		}
+
+		this->_parent = t;
+		t->_children.push_back(this);
+
+		_dirty = true;
+	}
+	
+	void add_child(transform* val)
+	{
+		val->set_parent(this);
+	}
+	void remove_child(transform* val)
+	{
+		auto pos = std::find(_children.begin(), _children.end(), val);
+
+		if (pos != _children.end()) 
+		{
+			_children.erase(pos);
+		}
+	}
+
+	template<typename T>
+	void iterate_depth_first(T&& fn)
+	{
+		fn(this);
+
+		for (auto& x : _children)
+			x->iterate_depth_first(std::forward<T>(fn));
+	}
+};
+
+
+// A two dimensional array of pixels encoded as a standardized bitstream, such as PNG.
+struct texture_image
+{
+	unsigned int handle = 0; // GPU
+	unsigned int target = 0; // texture_2d
+	unsigned int format = 0; // rgba
+	unsigned int width = 0;  // 1024
+	unsigned int height = 0; // 1024
+	unsigned int type = 0;   // unsigned byte
+
+	void create(const char* filename);
+};
+
+// An object that controls how image data is sampled.
+struct texture_sampler
+{
+	struct parameter
+	{
+		unsigned int param = 0;
+		unsigned int value = 0;
+	};
+	std::vector<parameter> parameters;
+
+	void setup(texture_image& img) const;
+};
+
+// An object that combines an image and its sampler.
 struct texture
 {
-	unsigned int handle = 0;
-	std::string type;
+	std::string _name;
+	std::string _path;
+	texture_image image;
+	texture_sampler sampler;
 };
+
+
+
+// An object describing the number and the format of data elements stored in a binary buffer.
+struct accessor
+{
+	// describes the format of a single data element stored in a binary buffer
+	struct element
+	{
+		unsigned int count = 0; // 3
+
+		unsigned int format = 0; // float
+		unsigned int pointer = 0; // (void*)(offsetof(vertex,position))
+	};
+
+
+	std::vector<element> elements;
+	unsigned int stride = 0;
+
+	void setup(buffer& buf) const;
+};
+
+
+// binding a mesh primitive with a material
+struct geometry
+{
+	unsigned int handle_vao = 0;
+	unsigned int handle_vbo = 0;
+	unsigned int handle_ebo = 0;
+
+
+	unsigned int count_indices = 0;
+	unsigned int count_vertices = 0;
+	
+	material* material = nullptr;
+
+	unsigned int mode = 0; // GL_TRIANGLES
+	unsigned int type = 0; // GL_UNSIGNED_INT
+
+
+
+	void create_from(const std::vector<vertex>& vertices, const std::vector<unsigned int>& indices);
+
+
+
+	void draw();
+};
+
+// a list of mesh primitives
 struct mesh
 {
-private:
-	inline static unsigned int empty_texture = 0;
-public:
-	// texture textures[4];
-	texture Diffuse;
-	texture Specular;
-public:
-	unsigned int vao;
-	unsigned int vbo;
-	unsigned int ebo;
-	unsigned int siz;
+	std::vector<geometry> geometry;
 
-
-	mesh(std::vector<vertex> v, std::vector<unsigned> i)
+	void draw()
 	{
-		if (empty_texture == 0)
+		for (auto& x : geometry)
 		{
-			glGenTextures(1, &empty_texture);
-			glBindTexture(GL_TEXTURE_2D, empty_texture);
-
-			unsigned char bits[4 * 4 * 4]
-			{
-				0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-				0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-				0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
-				0,0,0,0,0,0,0,
-			};
-
-			glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, 4, 4, 0, GL_RGB, GL_UNSIGNED_BYTE, bits);
+			x.draw();
 		}
-		Diffuse.handle = empty_texture;
-		Specular.handle = empty_texture;
-
-
-		siz = i.size();
-
-		// create buffers
-		glGenVertexArrays(1, &vao);
-		glGenBuffers(1, &vbo);
-		glGenBuffers(1, &ebo);
-
-		// bind state memory
-		glBindVertexArray(vao);
-
-		// vertex buffer
-		glBindBuffer(GL_ARRAY_BUFFER, vbo);
-		glBufferData(GL_ARRAY_BUFFER, sizeof(vertex) * v.size(), v.data(), GL_STATIC_DRAW);
-
-		// index buffer
-		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
-		glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(unsigned) * i.size(), i.data(), GL_STATIC_DRAW);
-
-		// vertex positions
-		glEnableVertexAttribArray(0);
-		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, position));
-		// vertex normals
-		glEnableVertexAttribArray(1);
-		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, normal));
-		// vertex texture coords
-		glEnableVertexAttribArray(2);
-		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(vertex), (void*)offsetof(vertex, uv));
 	}
 };
 
-class model
+struct node
 {
+	std::string _name;
+
+	node* _parent = nullptr;
+	std::vector<std::shared_ptr<node>> _children;
+
+	mesh _graphics;
+	
+	transform _transform;
+
+	// any other graphics attributes go here too...
+	// like lights, particle systems, etc
+	// also scripts
+	
+	// returns the root node
+	transform* instantiate(scene_graph& scene, transform* parent = nullptr);
+};
+
+
+// a list of root nodes that compose a scene
+struct scene_graph
+{
+	std::vector<transform*> _roots;
+
 public:
-	std::string directory;
-	std::vector<mesh> meshes;
-
-
-
-	void load(const std::string& path)
+	transform* create(const std::string& name, transform* parent = nullptr)
 	{
-		meshes.reserve(100);
-		printf("loading '%s'\n", path.c_str());
+		transform* entity = create_transform();
+		entity->rename(name);
 
-		using std::cout;
-		using std::endl;
-
-		Assimp::Importer importer;
-		const aiScene* scene = importer.ReadFile(path, aiProcess_Triangulate | aiProcess_FlipUVs | aiProcessPreset_TargetRealtime_Fast);
-		
-
-		if (!scene || scene->mFlags & AI_SCENE_FLAGS_INCOMPLETE || !scene->mRootNode)
+		if (parent)
 		{
-			cout << "ERROR::ASSIMP::" << importer.GetErrorString() << endl;
-			return;
-		}
-		directory = path.substr(0, path.find_last_of('\\'));
-
-		processNode(scene->mRootNode, scene);
-		
-		printf("loaded '%s'\n", path.c_str());
-	}
-
-	void processNode(aiNode* node, const aiScene* scene)
-	{
-		printf("processing node: '%s'\n\tchildren:%u\n",node->mName.C_Str(),node->mNumChildren);
-
-		// process all the node's meshes (if any)
-		for (unsigned int i = 0; i < node->mNumMeshes; i++)
-		{
-			aiMesh* mesh = scene->mMeshes[node->mMeshes[i]];
-			meshes.push_back(processMesh(mesh, scene));
-		}
-		// then do the same for each of its children
-		for (unsigned int i = 0; i < node->mNumChildren; i++)
-		{
-			processNode(node->mChildren[i], scene);
-		}
-	}
-
-
-	mesh processMesh(aiMesh* mesh, const aiScene* scene)
-	{
-		std::vector<vertex> vertices;
-		std::vector<unsigned int> indices;
-		
-		texture TexDiffuse{};
-		texture TexSpecular{};
-
-		for (unsigned int i = 0; i < mesh->mNumVertices; i++)
-		{
-			vertex vertex;
-			// process vertex positions, normals and texture coordinates
-			vec3 vector;
-			vector.x = mesh->mVertices[i].x;
-			vector.y = mesh->mVertices[i].y;
-			vector.z = mesh->mVertices[i].z;
-			vertex.position = vector;
-			vector.x = mesh->mNormals[i].x;
-			vector.y = mesh->mNormals[i].y;
-			vector.z = mesh->mNormals[i].z;
-			vertex.normal = vector;
-
-			if (mesh->mTextureCoords[0]) // does the mesh contain texture coordinates?
-			{
-				vec2 vec;
-				vec.x = mesh->mTextureCoords[0][i].x;
-				vec.y = mesh->mTextureCoords[0][i].y;
-				vertex.uv = vec;
-			}
-			else 
-			{
-				vertex.uv = vec2(0.0f, 0.0f);
-			}
-
-			vertices.push_back(vertex);
-		}
-		for (unsigned int i = 0; i < mesh->mNumFaces; i++)
-		{
-			aiFace face = mesh->mFaces[i];
-			for (unsigned int j = 0; j < face.mNumIndices; j++)
-				indices.push_back(face.mIndices[j]);
-		}
-
-		// process material
-		if (mesh->mMaterialIndex >= 0)
-		{
-			aiMaterial* material = scene->mMaterials[mesh->mMaterialIndex];
-			std::vector<texture> diffuseMaps = loadMaterialTextures(material,
-				aiTextureType_DIFFUSE, "diffuse");
-			
-			// assume only one diffuse map
-			if (!diffuseMaps.empty()) TexDiffuse = diffuseMaps.front();
-
-			// assume only one specular map
-			std::vector<texture> specularMaps = loadMaterialTextures(material,
-				aiTextureType_SPECULAR, "specular");
-			
-			if (!specularMaps.empty()) TexSpecular = specularMaps.front();
-		}
-
-		auto ret = ::mesh(vertices, indices);
-		ret.Diffuse = TexDiffuse;
-		ret.Specular = TexSpecular;
-		return ret;
-	}
-	std::vector<texture> loadMaterialTextures(aiMaterial* mat, aiTextureType type, std::string typeName)
-	{
-		std::vector<texture> textures;
-		for (unsigned int i = 0; i < mat->GetTextureCount(type); i++)
-		{
-			aiString str;
-			mat->GetTexture(type, i, &str);
-			texture texture;
-			texture.handle = TextureFromFile(str.C_Str(), directory, false);
-			texture.type = typeName;
-			// texture.path = str;
-			textures.push_back(texture);
-		}
-		return textures;
-	}
-
-
-
-	unsigned int TextureFromFile(const char* path, const std::string& directory, bool gamma)
-	{
-		std::string filename = std::string(path);
-		filename = directory + '/' + filename;
-
-		unsigned int textureID;
-		glGenTextures(1, &textureID);
-
-		int width, height, nrComponents;
-		unsigned char* data = stbi_load(filename.c_str(), &width, &height, &nrComponents, 0);
-		if (data)
-		{
-			GLenum format;
-			if (nrComponents == 1)
-				format = GL_RED;
-			else if (nrComponents == 3)
-				format = GL_RGB;
-			else if (nrComponents == 4)
-				format = GL_RGBA;
-
-			glBindTexture(GL_TEXTURE_2D, textureID);
-			glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
-			glGenerateMipmap(GL_TEXTURE_2D);
-
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-
-			stbi_image_free(data);
+			entity->set_parent(parent);
 		}
 		else
 		{
-			std::cout << "Texture failed to load at path: " << path << std::endl;
-			stbi_image_free(data);
+			_roots.push_back(entity);
 		}
 
-		return textureID;
+		return entity;
+	}
+
+	template<typename T>
+	void iterate_depth_first(T&& fn) const
+	{
+		for (auto& child : _roots)
+			child->iterate_depth_first(fn);
+	}
+private:
+	transform* create_transform()
+	{
+		// for now just create a new transform. this ensures its always valid.
+		return new transform();
 	}
 };
+
+
+// a root node of a geometry collection
+struct model
+{
+	std::string _name;
+	std::shared_ptr<node> _root;
+
+	transform* instantiate(scene_graph& scene, transform* parent = nullptr)
+	{
+		// instantiate root node in the current scene
+		return _root->instantiate(scene, parent);
+	}
+};
+
+class window;
+
+class model_importer
+{
+	bool _success = true;
+	std::string directory;
+public:
+	model try_import(window*,const std::string& filepath);
+
+	
+	bool success()
+	{
+		return _success;
+	}
+
+private:
+	
+	std::shared_ptr<node>  load_node(aiNode* AiNode, node* NodeParent, const std::vector<geometry>& scene_meshes)
+	{
+		printf("loading node: '%s'\n", AiNode->mName.C_Str());
+
+
+		std::shared_ptr<node> add = std::make_shared<node>();
+		
+		add->_name = AiNode->mName.C_Str();
+		add->_parent = NodeParent;
+		if (NodeParent) NodeParent->_children.push_back(add);
+
+		// get the node transform
+		aiVector3D scaling;
+		aiVector3D axis_rotation;
+		ai_real angle_rotation;
+		aiVector3D position;
+		AiNode->mTransformation.Decompose(scaling,axis_rotation,angle_rotation,position);
+		
+		
+		// set the node transform
+		add->_transform.set_position({ position.x,position.y,position.z });
+		{
+			double s = sin(angle_rotation / 2.0f);
+			double x = axis_rotation.x * s;
+			double y = axis_rotation.y * s;
+			double z = axis_rotation.z * s;
+			double w = cos(angle_rotation / 2.0f);
+			add->_transform.set_rotation({ x,y,z,w });
+		}
+		
+		add->_transform.set_scale({ scaling.x,scaling.y,scaling.z });
+
+		printf("\tmeshes: %u\n", AiNode->mNumMeshes);
+		printf("\tchildren: %u\n", AiNode->mNumChildren);
+		
+		// set the node meshes
+		for (unsigned int i = 0; i < AiNode->mNumMeshes; ++i)
+		{
+			add->_graphics.geometry.push_back(scene_meshes[AiNode->mMeshes[i]]);
+		}
+
+		// create all children nodes
+		for (unsigned int i = 0; i < AiNode->mNumChildren; ++i)
+		{
+			load_node(AiNode->mChildren[i], add.get(), scene_meshes);
+		}
+		return add;
+	}
+};
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 class geometry_builder
 {
@@ -373,3 +878,4 @@ public:
 		return cross(edge1, edge2).normalized();
 	}
 };
+

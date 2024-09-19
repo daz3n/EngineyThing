@@ -228,7 +228,10 @@ void window::update_buffers()
 	}
 
 	{
+		this->scenes().active().current().camera().move_to(vec3(std::sin(glfwGetTime()) * 10, 1, std::cos(glfwGetTime()) * 10)).look_at(vec3());
 		Buffer_Data_Camera& data = _scenes.current().camera().data();
+		
+
 
 		update_buffer("Camera", sizeof(data), &data);
 	}
@@ -269,13 +272,17 @@ void window::update_buffers()
 
 		update_buffer("Lights", sizeof(data), &data);
 	}
+
+
+	{
+		scenes().active().current().entities()._roots[0]->set_position(vec3(0,std::sin(glfwGetTime()) * 2, 0));
+	}
 }
 
 window::window()
 {
 	create_handle();
 	update_handle();
-
 	init_buffers();
 	init_shaders();
 	init_materials(); // todo
@@ -287,8 +294,7 @@ void window::tick()
 	glClearColor(1, 1, 1, 1);
 
 	hooks().call("update", fps().last_frametime());
-	this->scenes().active().current().camera().on_update()();
-
+	
 
 	// update the window and camera uniform blocks
 	update_buffers();
@@ -296,9 +302,9 @@ void window::tick()
 	// update physics
 	// update scripts
 
-
+	//                                1.0 / min fps
 	// double draw_when_faster_than = 1.0 / 30.0;
-	double draw_when_faster_than = 1.0 / 15.0;
+	double draw_when_faster_than    = 1.0 / 15.0;
 
 	if (fps().last_frametime() <= draw_when_faster_than)
 	{

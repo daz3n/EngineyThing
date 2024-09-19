@@ -9,7 +9,6 @@
 #include <chrono>
 
 
-#include "Map.h"
 #include "Model.h"
 
 
@@ -27,14 +26,23 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 
+class model;
+class material;
+class shader;
+class texture;
+
+// todo:
+	// window::resources::load_model()
+
+	// im having issues with binding a shader.
+		// i can render things if i dont call bind
+		// i cant if i do?
+
 
 // todo: grass!!!
 // https://www.shadertoy.com/view/4dBcDV
 // https://www.shadertoy.com/view/dd2cWh
 // https://www.reddit.com/r/godot/comments/13sl4o8/open_source_stylized_sky_shader_and_a_simple_day/
-
-// bugfix
-// void process_look(vec3 delta) 
 
 /*
 	shaders must be put into Resources//Shaders//
@@ -50,9 +58,10 @@
 	
 	the shader called compose will be used to draw all of the scene geometry.
 	depth, gbuffer and lighting will all be handled automatically.
-
-
 */
+
+
+
 namespace settings
 {
 	enum 
@@ -109,41 +118,6 @@ struct input_msg_mouse_button
 };
 
 
-
-
-
-
-enum class callback_type
-{
-	// never called
-	none,
-	// called on first press
-	first,
-	// called on last press
-	last,
-	// called on every press
-	always,
-	// number of options
-	count
-};
-enum class processing
-{
-	none,
-	// interpolate between previous and current value.
-	smooth,
-	// either on or off
-	binary,
-	// number of options
-	count
-};
-enum class input_source
-{
-	none,
-	keyboard,
-	mouse,
-	count
-};
-
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
 
@@ -155,247 +129,9 @@ enum class input_source
 	// idk i cba
 
 
-using std::string;
-std::string read_file(const std::string& filename);
 
-class shader
-{
-	std::string _name;
-	int _targets;
-
-	unsigned int _handle;
-	std::string _path_vert;
-	std::string _path_frag;
-	std::string _path_geom;
-
-	unsigned int build_module(unsigned int Type = GL_VERTEX_SHADER, const std::string& insource = "")
-	{
-		const char* source = insource.c_str();
-
-		unsigned int id = glCreateShader(Type);
-		glShaderSource(id, 1, &source, NULL);
-		glCompileShader(id);
-		
-		// check for compilation errors
-		int success;
-		char infoLog[512];
-		glGetShaderiv(id, GL_COMPILE_STATUS, &success);
-		if (!success)
-		{
-			glGetShaderInfoLog(id, 512, NULL, infoLog);
-			printf("failed to compile shader: %s\n---\n",infoLog);
-			return 0;
-		}
-
-		return id;
-	}
-	unsigned int build_shader(unsigned int& Vert, unsigned int& Frag, unsigned int& Geom)
-	{
-		// link shaders
-		unsigned int shaderProgram = glCreateProgram();
-		if (Vert) glAttachShader(shaderProgram, Vert);
-		if (Frag) glAttachShader(shaderProgram, Frag);
-		if (Geom) glAttachShader(shaderProgram, Geom);
-		glLinkProgram(shaderProgram);
-
-		// check for linking errors
-		int success;
-		char infoLog[512];
-		glGetProgramiv(shaderProgram, GL_LINK_STATUS, &success);
-		if (!success) {
-			glGetProgramInfoLog(shaderProgram, 512, NULL, infoLog);
-			printf("failed to link shader: %s\n---\n");
-		}
-
-		if (Vert) glDeleteShader(Vert);
-		if (Frag) glDeleteShader(Frag);
-		if (Geom) glDeleteShader(Geom);
-		return shaderProgram;
-	}
-public:
-	string name() { return _name; }
-	int targets() { return _targets; }
-	unsigned int handle() { return _handle; }
-
-	shader(const std::string& name) : _name(name)
-	{
-		_path_vert = "Resources//Shaders//" + name + ".vert";
-		_path_frag = "Resources//Shaders//" + name + ".frag";
-		_path_geom = "Resources//Shaders//" + name + ".geom";
-	}
-
-	bool bind()
-	{
-		glUseProgram(_handle);
-		return _handle != 0;
-	}
-	bool build()
-	{
-		// find the vert and frag shaders in the shaders directory by name
-		std::string path_v = path_vert();
-		std::string path_f = path_frag();
-		std::string path_g = path_geom();
-
-		// get their data
-		std::string src_v = read_file(path_v);
-		std::string src_f = read_file(path_f);
-		std::string src_g = read_file(path_g);
-
-		// build the shader
-		unsigned int id_v = src_v.size() <= 5 ? 0 : build_module(GL_VERTEX_SHADER, src_v);
-		unsigned int id_f = src_f.size() <= 5 ? 0 : build_module(GL_FRAGMENT_SHADER, src_f);
-		unsigned int id_g = src_g.size() <= 5 ? 0 : build_module(GL_GEOMETRY_SHADER, src_g);
-
-		_handle = build_shader(
-			id_v,
-			id_f, 
-			id_g);
-
-		return _handle != 0;
-	}
-	string path_vert() { return _path_vert; }
-	string path_frag() { return _path_frag; }
-	string path_geom() { return _path_geom; }
-
-
-	// utility uniform functions
-	// ------------------------------------------------------------------------
-	void setBool(const std::string& name, bool value) const
-	{
-		glUniform1i(glGetUniformLocation(_handle, name.c_str()), (int)value);
-	}
-	// ------------------------------------------------------------------------
-	void setInt(const std::string& name, int value) const
-	{
-		glUniform1i(glGetUniformLocation(_handle, name.c_str()), value);
-	}
-	// ------------------------------------------------------------------------
-	void setFloat(const std::string& name, float value) const
-	{
-		glUniform1f(glGetUniformLocation(_handle, name.c_str()), value);
-	}
-	// ------------------------------------------------------------------------
-	void setVec2(const std::string& name, const vec2& value) const
-	{
-		glUniform2fv(glGetUniformLocation(_handle, name.c_str()), 1, &value[0]);
-	}
-	void setVec2(const std::string& name, float x, float y) const
-	{
-		glUniform2f(glGetUniformLocation(_handle, name.c_str()), x, y);
-	}
-	// ------------------------------------------------------------------------
-	void setVec3(const std::string& name, const vec3& value) const
-	{
-		glUniform3fv(glGetUniformLocation(_handle, name.c_str()), 1, &value[0]);
-	}
-	void setVec3(const std::string& name, float x, float y, float z) const
-	{
-		glUniform3f(glGetUniformLocation(_handle, name.c_str()), x, y, z);
-	}
-	// ------------------------------------------------------------------------
-	void setVec4(const std::string& name, const vec4& value) const
-	{
-		glUniform4fv(glGetUniformLocation(_handle, name.c_str()), 1, &value[0]);
-	}
-	void setVec4(const std::string& name, float x, float y, float z, float w) const
-	{
-		glUniform4f(glGetUniformLocation(_handle, name.c_str()), x, y, z, w);
-	}
-	// ------------------------------------------------------------------------
-	void setMat2(const std::string& name, const mat2& mat) const
-	{
-		glUniformMatrix2fv(glGetUniformLocation(_handle, name.c_str()), 1, GL_FALSE, &mat[0][0]);
-	}
-	// ------------------------------------------------------------------------
-	void setMat3(const std::string& name, const mat3& mat) const
-	{
-		glUniformMatrix3fv(glGetUniformLocation(_handle, name.c_str()), 1, GL_FALSE, &mat[0][0]);
-	}
-	// ------------------------------------------------------------------------
-	void setMat4(const std::string& name, const mat4& mat) const
-	{
-		glUniformMatrix4fv(glGetUniformLocation(_handle, name.c_str()), 1, GL_FALSE, &mat[0][0]);
-	}
-};
-
-
-struct material
-{
-	string name;
-	string path;
-
-	size_t texture_albedo;
-	size_t texture_normals;
-	size_t texture_metallic;
-	size_t texture_roughness;
-	size_t texture_ambient_occlusion;
-
-
-	vec3 color;
-	double metallic;
-	double roughness;
-};
 class script {};
 
-class scene_graph
-{
-public:
-	struct entity
-	{
-		std::string type; // "cooked fish" || "backpack"
-		model* geometry{};
-		mat4 transform = mat4(1);
-
-		vec3 albedo = vec3(1);
-	};
-	const std::vector<entity>::iterator begin()
-	{
-		return _entities.begin();
-	}
-	const std::vector<entity>::iterator end()
-	{
-		return _entities.end();
-	}
-	const std::vector<entity>::const_iterator begin() const
-	{
-		return _entities.begin();
-	}
-	const std::vector<entity>::const_iterator end() const 
-	{
-		return _entities.end();
-	}
-
-	// PUSH
-	entity& push(std::string itemname, vec3 pos)
-	{
-		if (!_models.contains(itemname))
-		{
-			_models[itemname].load(itemname);
-		}
-		
-		entity e{};
-		e.geometry = &_models[itemname];
-		e.type = itemname;
-		e.transform = transform_matrix::translate(mat4(1), pos);
-
-		_entities.push_back(e);
-		return _entities.back();
-	}
-	void load(std::string itemname, std::string itempath)
-	{
-		if (!_models.contains(itemname))
-		{
-			_models[itemname].load(itempath);
-		}
-	}
-	void define(std::string name,  std::vector<vertex> Verts, std::vector<unsigned> inds)
-	{
-		_models[name].meshes.emplace_back(Verts, inds);
-	}
-private:
-	std::unordered_map<std::string, model> _models;
-	std::vector<entity> _entities;
-};
 
 class window;
 struct world;
@@ -750,25 +486,131 @@ public:
 			for (const auto& x : shadernames)
 			{
 				printf("loading shader '%s'\n", x.c_str());
-				_shaders.emplace_back(x).build();
+				auto obj = std::make_unique<shader>(x);
+				obj->build();
+				_shaders.push_back(std::move(obj));
 			}
 
 			return true;
 		}
 		shader* find_shader(const std::string& name)
 		{
-			for (auto& x : _shaders) if (x.name() == name) return &x;
+			for (auto& x : _shaders) if (x->name() == name) return x.get();
 			return nullptr;
 		}
 
+
+		bool load_model(const std::string name, const std::string model_path)
+		{
+			model_importer importer;
+			
+			model add = importer.try_import(_root, model_path);
+
+			// this is the label used to instantiate the asset, different to the name of the root node.
+			add._name = name;
+
+			if (importer.success())
+			{
+				printf("LOADED MODEL '%s' FROM '%s'\n", name.c_str(), model_path.c_str());
+				_models.push_back(std::make_unique<model>(add));
+				return true;
+			}
+			else
+			{
+				printf("failed to load model '%s' from '%s'\n", name.c_str(), model_path.c_str());
+			}
+			
+
+			return false;
+		}
+		bool unload_model(const std::string& name)
+		{
+			__debugbreak();
+
+			for (auto& x : _models)
+			{
+				if (x->_name == name)
+				{
+					// unload
+					return true;
+				}
+			}
+
+			return false;
+		}
+		model* find_model(const std::string& name) // = "backpack"
+		{
+			for (auto& x : _models) if (x->_name == name) return x.get();
+			return nullptr;
+		}
+		
+
+		material* find_material(const std::string& name)
+		{
+			for (auto& x : _materials) if (x->_name == name) return x.get();
+			return nullptr;
+		}
+		material* find_or_create_material(const std::string& name, const std::string& shader_name)
+		{
+			if (auto* ret = find_material(name)) return ret;
+
+			// find the shader to base the material off of
+			shader* s = find_shader(shader_name);
+			assert(s);
+
+			// create material based on a shader 
+			material mat = s->create_material();
+			mat._name = name;
+
+			// store reference to the new material
+			_materials.push_back(std::make_unique<material>(mat));
+			return _materials.back().get();
+		}
+
+		texture* find_texture(const std::string& path)
+		{
+			for (auto& x : _textures) if (x->_path == path) return x.get();
+			return nullptr;
+		}
+
+		texture* find_or_create_texture(const std::string& path)
+		{
+			if (auto* ret = find_texture(path)) return ret;
+
+			texture tex;
+			// prepare the sampling settings
+			tex.sampler.parameters.push_back({GL_TEXTURE_MIN_FILTER, GL_LINEAR });
+			tex.sampler.parameters.push_back({GL_TEXTURE_MAG_FILTER, GL_LINEAR });
+			tex.sampler.parameters.push_back({GL_TEXTURE_WRAP_S, GL_CLAMP });
+			tex.sampler.parameters.push_back({GL_TEXTURE_WRAP_T, GL_CLAMP });
+
+			// create the actual texture
+			tex.image.create(path.c_str());
+			tex.sampler.setup(tex.image);
+
+			// save a reference to the textures
+			_textures.push_back(std::make_unique<texture>(tex));
+			return _textures.back().get();
+		}
+	private:
+		// todo:
+		// all of these should be pointers to resources. not just resources.
+		// this is so that they are never invalidated.
+
+		// keeps all materials in memory
+		std::vector<std::unique_ptr<material>> _materials;
+		
 		// keeps all shaders in memory
-		std::vector<shader> _shaders;
+		std::vector<std::unique_ptr<shader>> _shaders;
+
+		// keeps all models in memory
+		std::vector<std::unique_ptr<model>> _models;
 
 		// keeps all textures in memory
-		std::vector<texture> _textures;
+		std::vector<std::unique_ptr<texture>> _textures;
 
 		// keeps all scripts in memory
-		std::vector<script> _scripts;
+		std::vector<std::unique_ptr<script>> _scripts;
 	};
 	resource_context& resources() { return _resources; }
 
@@ -1236,7 +1078,7 @@ public:
 			// bind read textures
 			for (const auto& req : _required_textures)
 			{
-				printf("\tbinding texture (handle=%u) from %10s prepass to (texture_slot=%i)\n", req.handle, req.source_name.c_str(), req.target);
+				print_on_update("\tbinding texture (handle=%u) from %10s prepass to (texture_slot=%i)\n", req.handle, req.source_name.c_str(), req.target);
 
 				glActiveTexture(GL_TEXTURE0 + req.target);
 				glBindTexture(GL_TEXTURE_2D, req.handle);
@@ -1300,7 +1142,7 @@ public:
 		{
 			if (settings::print_graphics)
 			{
-				printf("rendering %u entities\n", entities.end() - entities.begin());
+				printf("rendering entities\n");
 			}
 
 			for (auto& pass : _passes)
@@ -1403,61 +1245,6 @@ private:
 	GLFWwindow* handle;
 };
 
-
-#if 0
-struct object
-{
-
-};
-
-struct placement_context
-{
-	struct scripting_stream
-	{
-		scripting_stream attach(string script_name);
-	};
-	struct placement_stream
-	{
-		// min
-		// max
-		// weighting
-		placement_stream set_scale(vec3, vec3, float = 0.5);
-
-		placement_stream offset_position(vec3, vec3, float = 0.5);
-		placement_stream offset_rotation(vec3, vec3, float = 0.5);
-		placement_stream offset_scale(vec3, vec3, float = 0.5);
-
-		scripting_stream place(string item);
-		scripting_stream place(size_t item);
-		scripting_stream place();
-
-	};
-
-	struct point_stream
-	{
-		point_stream near(vec3 pos, float distance)
-		{
-			// generates _point_count points within distance of pos
-		}
-
-		point_stream visible_from(vec3 pos)
-		{
-			// makes sure that the generated points are visible from pos
-		}
-
-		point_stream facing(vec3);
-		point_stream nearly_facing(vec3, float);
-
-		placement_stream begin_placing();
-	};
-	
-	
-	point_stream near(vec3, float distance);
-	point_stream within(vec3, vec3);
-};
-#endif
-
-
 struct world
 {
 	world(window* owner) : 
@@ -1533,38 +1320,6 @@ struct world
 			return _data;
 		}
 
-		// the camera passively follows a target
-		void follow_target()
-		{
-
-			for (auto& x : _root->entities())
-			{
-				if (x.type == "cooked cube")
-				{
-					// follow x!
-					float dist = x.transform.c3.xyz.distance(_data._position.xyz);
-					dist = std::max(0.f, dist - 5); // stay 5m away
-
-					vec3 direction = x.transform.c3.xyz - _data._position.xyz;
-					direction.normalize();
-
-
-					if (dist)
-					{
-						move_to(_data._position.xyz + (direction * dist * 0.25)); // buffer to get there slower
-						look_at(x.transform.c3);
-					}
-
-					return;
-				}
-			}
-		}
-		action on_update()
-		{
-			action ret;
-			ret.assign<&view_context::follow_target>(this);
-			return ret;
-		}
 	private:
 		bool _is_view_dirty = false;
 		bool _is_proj_dirty = false;
@@ -1607,6 +1362,7 @@ private:
 	environment _background;
 };
 
+// this will need a rework just to be nice and tidy
 struct graphics
 {
 	window* Window;
@@ -1616,8 +1372,26 @@ public:
 	{
 		// depth framebuffer is already bound
 		// depth shader is already bound
+		
+
+		// todo:
+		// collect all entities with a mesh renderer component
+		// render the mesh geometry with the mesh material
 
 
+		entities.iterate_depth_first([&](transform* entity) 
+			{
+				pass->automatic_shader()->setMat4("model", entity->global_transform());
+				component* graphics = entity->get_component("mesh_renderer");
+
+
+				// for (const auto& x : entity->geometry->meshes)
+				// {
+				// 	glBindVertexArray(x.vao);
+				// 	glDrawElements(GL_TRIANGLES, x.siz, GL_UNSIGNED_INT, NULL);
+				// }
+			});
+#if 0
 		// draws all geometry
 		for (const auto& entity : entities)
 		{
@@ -1633,11 +1407,25 @@ public:
 				glDrawElements(GL_TRIANGLES, x.siz, GL_UNSIGNED_INT, NULL);
 			}
 		}
+#endif 
+
 	}
 	inline void draw_geometry_to_buffers(const window::renderpass* pass, const scene_graph& entities)
 	{
 		// g buffer is bound
 		// material shader is already bound
+
+		entities.iterate_depth_first([&](transform* entity)
+			{
+				pass->automatic_shader()->setMat4("model", entity->global_transform());
+				// pass->automatic_shader()->setMat4("model", mat4(1));
+				
+				if (entity->DRAW)
+				{
+					entity->DRAW->draw();
+				}
+			});
+#if 0
 		for (const auto& entity : entities)
 		{
 			// entity.geometry->global = transform_matrix::rotate(entity.geometry->global, { 0,1,0 }, 0.5);
@@ -1667,6 +1455,7 @@ public:
 				// pass->automatic_shader()->setVec3("glow", vec3(0.0));
 			}
 		}
+#endif 
 		// draws all geometry
 	}
 	inline void draw_lighting_to_texture(const window::renderpass* pass,const scene_graph&)
@@ -1807,73 +1596,6 @@ private:
 };
 
 
-// also updates each frame...
-// this is by registering a hooks
-class character_controller
-{
-	scene_graph::entity* Actor;
-	Buffer_Data_Camera* Camera;
-
-	vec3 velocity;
-	float acceleration = 1; 
-	float deceleraion = 1; 
-	float terminal_velocity = 5; // m/s
-
-private:
-	// method of retrieving velocity
-	handler keybind;
-public:
-	character_controller(window& win) : keybind(input_msg_key::TYPE)
-	{
-		Camera = &win.scenes().active().current().camera().data();
-
-		Actor = &win.scenes().active().current().entities().push("cooked cube",vec3());
-
-		keybind.assign<&character_controller::on_key>(this);
-	}
-
-	// this has to get hooked up to the update loop somehow...
-	void update(double deltaTime)
-	{
-		if (Actor and Camera)
-		{
-			printf("updating character controller\n");
-
-			// transform velocity to camera space
-			vec4 transformed = Camera->_view * vec4(velocity, 1);
-			transformed.z = 0;
-			transformed.w = 0;
-			transformed.normalize();
-
-			Actor->transform = transform_matrix::translate(Actor->transform, transformed.xyz * deltaTime);
-		}
-	}
-	void on_key(const message& msg)
-	{
-		auto& Cast = (message_data<input_msg_key>&)msg;
-
-		if (Cast.data.key == GLFW_KEY_W)
-		{
-			velocity.x = (Cast.data.action == GLFW_PRESS);
-		}
-		if (Cast.data.key == GLFW_KEY_S)
-		{
-			velocity.x = -(Cast.data.action == GLFW_PRESS);
-		}
-		if (Cast.data.key == GLFW_KEY_A)
-		{
-			velocity.y = -(Cast.data.action == GLFW_PRESS);
-		}
-		if (Cast.data.key == GLFW_KEY_D)
-		{
-			velocity.y = (Cast.data.action == GLFW_PRESS);
-		}
-
-		// etc for other keys
-	}
-};
-
-
 inline void demo()
 {
 	bool success = true;
@@ -1911,15 +1633,16 @@ inline void demo()
 	
 	if (true)
 	{
-		root.pipeline().push(false, "depth", 0, 0, true).function(depth_pass).depth_func(GL_LESS)
-			.clear_color({ 0,0,0 });
+		// root.pipeline().push(false, "depth", 0, 0, true).function(depth_pass).depth_func(GL_LESS)
+		// 	.clear_color({ 0,0,0 });
 
 		// position
 		// normal
 		// albedo
-		root.pipeline().push(true, "geometry", 3, 3, true).function(geometry_pass).depth_func(GL_LEQUAL)
-			.define_depth_source("depth")
-			.clear_color({ 0,0,0 });
+		root.pipeline().push(true, "geometry", 3, 3, true).function(geometry_pass)
+			// .depth_func(GL_LEQUAL)
+			// .define_depth_source("depth")
+			.clear_color({ 0,1,0 });
 
 		// lit geometry
 		// bloom output
@@ -1994,7 +1717,7 @@ inline void demo()
 	// shaders are complete.
 	// framebuffers are complete.
 	
-	// todo: models, transforms, scripts (the engine can only spawn prefabs)
+	// todo: models, transforms, scripts
 	// this is just a scene.
 	// todo: render functions
 
@@ -2002,8 +1725,10 @@ inline void demo()
 		// all transforms are only cpu side
 		// all materials are only cpu side
 	
-	handler DRAG(input_msg_mouse_drag::TYPE);
 
+	// this will just work.
+	// its a handler for a basic platform event that persists until the handler is destroyed.
+	handler DRAG(input_msg_mouse_drag::TYPE);
 	DRAG.assign([](const message& msg) 
 		{
 			message_data<input_msg_mouse_drag>& Cast = (message_data<input_msg_mouse_drag>&)msg;
@@ -2016,43 +1741,38 @@ inline void demo()
 		});
 
 
+
 	// creates scene camera
 	world scene(&root);
 	vec3 zero{0,1.5,0};
 	vec3 start{ 0, 2, -10 };
 
-	// move camera
-	 // window::axis_callback move_camera;
-	 // move_camera.assign({ GLFW_KEY_W, GLFW_KEY_S, GLFW_KEY_D, GLFW_KEY_A }, scene.camera().controls().WASD());
-	 // root.input().define(&move_camera);
-	 // move_camera.source(input_source::keyboard);
-	 // move_camera.method(callback_type::always);
-	 // 
-	
-	 // rotate camera
-	 // window::axis_callback rotate_camera;
-	 // rotate_camera.method(callback_type::always);
-	 // rotate_camera.source(input_source::mouse);
-	 // int KeyX = input::find("mouse")->parse_key("xdragdelta");
-	 // int KeyY = input::find("mouse")->parse_key("ydragdelta");
-	 //
-	 // // this wont ever work - i treat this as one axis.
-	 // // i need to just access the raw inputs here.
-	 // // 
-	 // rotate_camera.assign_raw({ KeyX, KeyY }, scene.camera().controls().rotate());
-	 // root.input().define(&rotate_camera);
-	// // 
-	
-	// window::axis_callback Callback;
-	
-
 
 	// sets the skybox and default camera position
-	scene.background().skybox("mysky","png");
+	// scene.background().skybox("mysky","png");
 	scene.camera().move_to(start).look_at(zero).zoom(1);
 	
-	// loads scene 0
 
+	printf("\n\nloading backpack model\n\n");
+	// load model into memory.
+		// load geometry into memory.
+		// load textures into memory.
+		// load materials into memory.
+	stbi_set_flip_vertically_on_load(true);
+	root.resources().load_model("backpack", "C:\\Users\\kyecu\\Desktop\\Code\\Resources\\backpack\\backpack.obj");
+	// root.resources().load_model("backpack", "C:\\Users\\kyecu\\Desktop\\Code\\Resources\\sponza\\source\\Sponza\\sponza.fbx");
+
+
+	// render model at root
+	root.resources().find_model("backpack")->instantiate(scene.entities());
+
+	// render model with parent
+	// auto Entity = scene.entities().create("New Entity");
+	// root.resources().find_model("backpack")->instantiate(scene.entities(), Entity);
+
+	
+
+	/*
 	std::vector<vertex> cube_verts
 	{
 		vertex{ .position{ -0.5f, -0.5f, -0.5f }, .normal{ 0.0f,  0.0f, -1.0f },  .uv{ 0.0f, 0.0f } },
@@ -2093,9 +1813,15 @@ inline void demo()
 		vertex{ .position{ -0.5f,  0.5f, -0.5f }, .normal{ 0.0f,  1.0f,  0.0f },  .uv{ 0.0f, 1.0  } }
 	};
 	std::vector<unsigned> cube_inds;
-	for (int i = 0; i < cube_verts.size(); ++i) cube_inds.push_back(i);
+	for (int i = 0; i < cube_verts.size(); ++i) 
+	{
+		cube_inds.push_back(i);
+	}
+	
 
 	scene.entities().define("cooked cube",cube_verts,cube_inds);
+	
+
 
 
 	{
@@ -2113,8 +1839,6 @@ inline void demo()
 		BUILD.build(cube_verts, cube_inds);
 		scene.entities().define("plane", cube_verts, cube_inds);
 	}
-
-
 
 	 scene.entities().push("cooked cube", { 0,0,0 });
 	 scene.entities().push("cooked cube", { 2,0,2 });
@@ -2134,16 +1858,11 @@ inline void demo()
 	// each scene is updated from top to bottom with unhandled events.
 
 	// scene.entities().push("backpack", { 0,0,0 });
-	character_controller CONTROLLER(root);
-
-	action_with<double> act;
-	act.assign<&character_controller::update>(&CONTROLLER);
-
-	root.hooks().add("update", act);
 
 	// the scene stack is stored in the window.
 	// the scripting engine is started at this point to begin gameplay.
-	
+	*/
+
 	root.play();
 }
 

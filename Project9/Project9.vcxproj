@@ -137,6 +137,7 @@
     <ClInclude Include="Header1\Header.h" />
     <ClInclude Include="Header2\components.h" />
     <ClInclude Include="Header2\Header.h" />
+    <ClInclude Include="Header2\input.h" />
     <ClInclude Include="Header2\Map.h" />
     <ClInclude Include="Header2\Model.h" />
     <ClInclude Include="Header2\raytrace.h" />
@@ -160,6 +161,7 @@
   <ItemGroup>
     <ClCompile Include="DefinitionParser.cpp" />
     <ClCompile Include="Header2\Header.cpp" />
+    <ClCompile Include="Header2\Model.cpp" />
     <ClCompile Include="Header2\scripting.cpp" />
     <ClCompile Include="Header2\STB.cpp" />
     <ClCompile Include="Header3\Source1.cpp" />

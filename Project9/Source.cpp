@@ -1,7 +1,7 @@
 // 
-// #include "./Header2/Header.h"
+#include "./Header2/Header.h"
 
-#include "./Header2/scripting.h"
+// #include "./Header2/scripting.h"
 
 
 // #include "./Header2/terrain.h"
@@ -19,6 +19,8 @@ int main(int,const char**)
 	// terrain_demo();
 
 	// scripting_demo();
+
+
 	demo();
 	
 	return 0;

@@ -48,7 +48,7 @@ void main()
     if (TextureChoice == 4) out1 = col4;
     if (TextureChoice == 5) out1 = col5;
    
-
+   
 
     // tone mapping
 	float exposure = 1.0;
@@ -57,5 +57,6 @@ void main()
     const float gamma = 2.2;
     out1 = pow(out1, vec3(1.0 / gamma));
 
-   FragColor = out1;
+   
+   FragColor = col2;
 }
